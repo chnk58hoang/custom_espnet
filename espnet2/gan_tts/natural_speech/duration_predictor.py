@@ -30,12 +30,13 @@ class DurationPredictor(nn.Module):
         x_mask: tensor (B, 1, L)
         return: tensor (B, 1, L)
         """
-        x = self.conv1(x, x_mask)
-        x = self.dropout(x)
-        x = self.conv2(x, x_mask)
-        x = self.dropout(x)
-        x = self.conv3(x * x_mask)
-        return x
+        x = torch.detach(x)
+        dur = self.conv1(x, x_mask)
+        dur = self.dropout(dur)
+        dur = self.conv2(dur, x_mask)
+        dur = self.dropout(dur)
+        dur = self.conv3(dur * x_mask)
+        return dur
 
 
 class LearnableUpsampler(nn.Module):

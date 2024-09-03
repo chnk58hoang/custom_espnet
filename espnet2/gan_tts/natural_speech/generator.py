@@ -77,7 +77,7 @@ class NSGenerator(torch.nn.Module):
         learnable_upsampler_kernel_size: int = 1,
         learnable_upsampler_dim_w: int = 4,
         learnable_upsampler_dim_c: int = 2,
-        compute_gt_duration: bool = False
+        use_gt_duration: bool = False
     ):
         """Initialize NaturalSpeech generator module.
 
@@ -154,7 +154,7 @@ class NSGenerator(torch.nn.Module):
             learnable_upsampler_kernel_size (int): Kernel size in learnable upsampler.
             learnable_upsampler_dim_w (int): Dimension of w in learnable upsampler.
             learnable_upsampler_dim_c (int): Dimension of c in learnable upsampler.
-            compute_gt_duration (bool): Compute ground-truth duration from MAS
+            use_gt_duration (bool): Compute ground-truth duration from MAS
         """
         super().__init__()
         self.segment_size = segment_size
@@ -235,7 +235,7 @@ class NSGenerator(torch.nn.Module):
             dim_w=learnable_upsampler_dim_w,
             dim_c=learnable_upsampler_dim_c
         )
-        self.compute_gt_duration = compute_gt_duration
+        self.use_gt_duration = use_gt_duration
         self.spks = None
         if spks is not None and spks > 1:
             assert global_channels > 0
@@ -311,7 +311,6 @@ class NSGenerator(torch.nn.Module):
         """
         # forward text encoder
         x, m_p, logs_p, x_mask = self.text_encoder(text, text_lengths)
-
         # calculate global conditioning
         g = None
         if self.spks is not None:
@@ -338,7 +337,10 @@ class NSGenerator(torch.nn.Module):
         # forward flow
         z_p = self.flow(z, y_mask, g=g)  # (B, H, T_feats)
 
-        # monotonic alignment search
+        # forward differntiable durator
+        pred_logdur = self.duration_predictor(x, x_mask)
+        pred_dur = torch.exp(pred_logdur) * x_mask
+        # monotonic alignment search to compute gt duration
         with torch.no_grad():
             # negative cross-entropy
             s_p_sq_r = torch.exp(-2 * logs_p)  # (B, H, T_text)
@@ -377,6 +379,19 @@ class NSGenerator(torch.nn.Module):
                 .unsqueeze(1)
                 .detach()
             )
+            gt_dur = torch.sum(attn, dim=2)  # (B, 1, T_text)
+            gt_logdur = torch.log(gt_dur + 1e-6) * x_mask
+            if self.use_gt_duration:
+                (upsample_rep,
+                 mean_prior,
+                 logstd_prior,
+                 frame_mask,
+                 frame_lengths,
+                 w_matrix) = self.learnable_upsampler(gt_dur.squeeze(1),
+                                                      x,
+                                                      x_mask)
+
+
 
         # # forward duration predictor
         # w = attn.sum(2)  # (B, 1, T_text)
