@@ -382,47 +382,49 @@ class NSGenerator(torch.nn.Module):
             gt_dur = torch.sum(attn, dim=2)  # (B, 1, T_text)
             gt_logdur = torch.log(gt_dur + 1e-6) * x_mask
             if self.use_gt_duration:
-                (upsample_rep,
-                 mean_prior,
+                (mean_prior,
                  logstd_prior,
                  frame_mask,
                  frame_lengths,
                  w_matrix) = self.learnable_upsampler(gt_dur.squeeze(1),
                                                       x,
                                                       x_mask)
+            else:
+                (mean_prior,
+                 logstd_prior,
+                 frame_mask,
+                 frame_lengths,
+                 w_matrix) = self.learnable_upsampler(pred_dur.squeeze(1),
+                                                      x,
+                                                      x_mask)
+            # Backward the bidirectional flow
+            z_q = self.flow(mean_prior + torch.rand_like(mean_prior) * torch.exp(logstd_prior),
+                            frame_mask.unsqueeze(1),
+                            g=None,
+                            inverse=True)
 
+            # feed posterior to generator
+            z_segs, z_start_idxs = get_random_segments(z, feats_lengths,
+                                                       self.segment_size)
+            wav1 = self.decoder(z_segs, g)
 
-
-        # # forward duration predictor
-        # w = attn.sum(2)  # (B, 1, T_text)
-        # dur_nll = self.duration_predictor(x, x_mask, w=w, g=g)
-        # dur_nll = dur_nll / torch.sum(x_mask)
-
-        # # expand the length to match with the feature sequence
-        # # (B, T_feats, T_text) x (B, T_text, H) -> (B, H, T_feats)
-        # m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(1, 2)
-        # # (B, T_feats, T_text) x (B, T_text, H) -> (B, H, T_feats)
-        # logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2)
-
-        # # get random segments
-        # z_segments, z_start_idxs = get_random_segments(
-        #     z,
-        #     feats_lengths,
-        #     self.segment_size,
-        # )
-
-        # # forward decoder with random segments
-        # wav = self.decoder(z_segments, g=g)
-
-        # return (
-        #     wav,
-        #     dur_nll,
-        #     attn,
-        #     z_start_idxs,
-        #     x_mask,
-        #     y_mask,
-        #     (z, z_p, m_p, logs_p, m_q, logs_q),
-        # )
+            # feed enhanced prior to generator
+            z_q_segs, z_q_start_idxs = get_random_segments(z_q,
+                                                           torch.minimum(feats_lengths, frame_lengths),
+                                                           self.segment_size)
+            wav2 = self.decoder(z_q_segs,g)
+            return (
+                wav1,
+                wav2,
+                z_start_idxs,
+                z_q_start_idxs,
+                x_mask,
+                y_mask,
+                frame_mask,
+                pred_logdur,
+                gt_logdur,
+                (z, z_p, z_q, m_p, logs_p, m_q, logs_q)
+            )
 
     def inference(
         self,
@@ -460,7 +462,6 @@ class NSGenerator(torch.nn.Module):
 
         Returns:
             Tensor: Generated waveform tensor (B, T_wav).
-            Tensor: Monotonic attention weight tensor (B, T_feats, T_text).
             Tensor: Duration tensor (B, T_text).
 
         """
@@ -535,56 +536,19 @@ class NSGenerator(torch.nn.Module):
                 logw = self.duration_predictor(
                     x,
                     x_mask,
-                    g=g,
-                    inverse=True,
-                    noise_scale=noise_scale_dur,
                 )
                 w = torch.exp(logw) * x_mask * alpha
                 dur = torch.ceil(w)
-            y_lengths = torch.clamp_min(torch.sum(dur, [1, 2]), 1).long()
-            y_mask = make_non_pad_mask(y_lengths).unsqueeze(1).to(text.device)
-            attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
-            attn = self._generate_path(dur, attn_mask)
-
-            # expand the length to match with the feature sequence
-            # (B, T_feats, T_text) x (B, T_text, H) -> (B, H, T_feats)
-            m_p = torch.matmul(
-                attn.squeeze(1),
-                m_p.transpose(1, 2),
-            ).transpose(1, 2)
-            # (B, T_feats, T_text) x (B, T_text, H) -> (B, H, T_feats)
-            logs_p = torch.matmul(
-                attn.squeeze(1),
-                logs_p.transpose(1, 2),
-            ).transpose(1, 2)
-
+            (mean_prior,
+             logstd_prior,
+             frame_mask,
+             frame_lengths,
+             w_matrix) = self.learnable_upsampler(dur.squeeze(1),
+                                                  x,
+                                                  x_mask)
             # decoder
-            z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
-            z = self.flow(z_p, y_mask, g=g, inverse=True)
-            wav = self.decoder((z * y_mask)[:, :, :max_len], g=g)
+            z_p = mean_prior + torch.randn_like(mean_prior) * torch.exp(logstd_prior) * noise_scale
+            z = self.flow(z_p, frame_mask.unsqueeze(1), g=g, inverse=True)
+            wav = self.decoder((z * frame_mask.unsqueeze(1))[:, :, :max_len], g=g)
 
-        return wav.squeeze(1), attn.squeeze(1), dur.squeeze(1)
-
-    def _generate_path(self, dur: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """Generate path a.k.a. monotonic attention.
-
-        Args:
-            dur (Tensor): Duration tensor (B, 1, T_text).
-            mask (Tensor): Attention mask tensor (B, 1, T_feats, T_text).
-
-        Returns:
-            Tensor: Path tensor (B, 1, T_feats, T_text).
-
-        """
-        b, _, t_y, t_x = mask.shape
-        cum_dur = torch.cumsum(dur, -1)
-        cum_dur_flat = cum_dur.view(b * t_x)
-        path = torch.arange(t_y, dtype=dur.dtype, device=dur.device)
-        path = path.unsqueeze(0) < cum_dur_flat.unsqueeze(1)
-        path = path.view(b, t_x, t_y).to(dtype=mask.dtype)
-        # path will be like (t_x = 3, t_y = 5):
-        # [[[1., 1., 0., 0., 0.],      [[[1., 1., 0., 0., 0.],
-        #   [1., 1., 1., 1., 0.],  -->   [0., 0., 1., 1., 0.],
-        #   [1., 1., 1., 1., 1.]]]       [0., 0., 0., 0., 1.]]]
-        path = path - F.pad(path, [0, 0, 1, 0, 0, 0])[:, :-1]
-        return path.unsqueeze(1).transpose(2, 3) * mask
+        return wav.squeeze(1), dur.squeeze(1)

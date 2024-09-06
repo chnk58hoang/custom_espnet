@@ -145,6 +145,6 @@ class LearnableUpsampler(nn.Module):
         wc = self.linear_c(wc)  # batch, L_frame, phoneme_dimension
         whc = wh + wc  # batch, L_frame, phoneme_dimension
         whc = whc.masked_fill(~frame_mask.unsqueeze(-1), 0)
-        upsample_rep = self.proj_o(whc)  # batch, L_frame, 2 * phoneme_dimension
-        mean, log_std = torch.split(upsample_rep.transpose(1, 2), self.phone_dim, dim=1)
-        return upsample_rep, mean, log_std, frame_mask, frame_lengths, w_matrix
+        upsample_rep = self.proj_o(whc).transpose(1, 2)  # batch, 2 * phoneme_dimension, L_frame
+        mean, log_std = torch.split(upsample_rep, self.phone_dim, dim=1)
+        return mean, log_std, frame_mask, frame_lengths, w_matrix
