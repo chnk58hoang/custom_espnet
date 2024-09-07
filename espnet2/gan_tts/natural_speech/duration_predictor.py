@@ -9,6 +9,7 @@ import torch
 
 class DurationPredictor(nn.Module):
     def __init__(self,
+                 g_channel: int,
                  hidden_channels: int,
                  kernel_size: int,
                  p_dropout: float) -> None:
@@ -23,14 +24,20 @@ class DurationPredictor(nn.Module):
                                out_channels=1,
                                kernel_size=kernel_size)
         self.dropout = nn.Dropout(p_dropout)
+        self.g_cond = nn.Conv1d(in_channels=g_channel,
+                                out_channels=hidden_channels,
+                                kernel_size=1)
 
-    def forward(self, x, x_mask):
+    def forward(self, x, x_mask, g=None):
         """
         x: tensor (B, Cin, L)
         x_mask: tensor (B, 1, L)
         return: tensor (B, 1, L)
         """
         x = torch.detach(x)
+        if g is not None:
+            g = torch.detach(g)
+            x = x + self.g_cond(g)
         dur = self.conv1(x, x_mask)
         dur = self.dropout(dur)
         dur = self.conv2(dur, x_mask)

@@ -224,6 +224,7 @@ class NSGenerator(torch.nn.Module):
         # )
 
         self.duration_predictor = DurationPredictor(
+            g_channel=global_channels,
             hidden_channels=hidden_channels,
             kernel_size=duration_predictor_kernel_size,
             p_dropout=duration_predictor_dropout_rate,
@@ -338,7 +339,7 @@ class NSGenerator(torch.nn.Module):
         z_p = self.flow(z, y_mask, g=g)  # (B, H, T_feats)
 
         # forward differntiable durator
-        pred_logdur = self.duration_predictor(x, x_mask)
+        pred_logdur = self.duration_predictor(x, x_mask, g)
         pred_dur = torch.exp(pred_logdur) * x_mask
         # monotonic alignment search to compute gt duration
         with torch.no_grad():
@@ -536,6 +537,7 @@ class NSGenerator(torch.nn.Module):
                 logw = self.duration_predictor(
                     x,
                     x_mask,
+                    g
                 )
                 w = torch.exp(logw) * x_mask * alpha
                 dur = torch.ceil(w)
