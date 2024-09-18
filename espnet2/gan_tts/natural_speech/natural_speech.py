@@ -21,7 +21,7 @@ from espnet2.gan_tts.hifigan.loss import (
 )
 from espnet2.gan_tts.utils import get_segments
 from espnet2.gan_tts.natural_speech.generator import NSGenerator
-from espnet2.gan_tts.natural_speech.loss import KLDivergenceLoss
+from espnet2.gan_tts.natural_speech.loss import SoftDTWKLLoss
 from espnet2.torch_utils.device_funcs import force_gatherable
 
 AVAILABLE_GENERATORS = {
@@ -78,4 +78,3 @@ class NaturalSpeech(AbsGANTTS):
             **discriminator_adv_loss_params)
         self.feat_match_loss = FeatureMatchLoss(**feat_match_loss_params)
         self.mel_loss = MelSpectrogramLoss(**mel_loss_params)
-        
