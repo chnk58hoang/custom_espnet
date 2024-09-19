@@ -236,6 +236,7 @@ class NSGenerator(torch.nn.Module):
             dim_w=learnable_upsampler_dim_w,
             dim_c=learnable_upsampler_dim_c
         )
+        self.upsample_factor = int(np.prod(decoder_upsample_scales))
         self.use_gt_duration = use_gt_duration
         self.spks = None
         if spks is not None and spks > 1:
@@ -407,16 +408,16 @@ class NSGenerator(torch.nn.Module):
             # feed posterior to generator
             z_segs, z_start_idxs = get_random_segments(z, feats_lengths,
                                                        self.segment_size)
-            wav1 = self.decoder(z_segs, g)
+            pre_wav_post = self.decoder(z_segs, g)
 
             # feed enhanced prior to generator
             z_q_segs, z_q_start_idxs = get_random_segments(z_q,
                                                            torch.minimum(feats_lengths, frame_lengths),
                                                            self.segment_size)
-            wav2 = self.decoder(z_q_segs,g)
+            pre_wav_e2e = self.decoder(z_q_segs,g)
             return (
-                wav1,
-                wav2,
+                pre_wav_post,
+                pre_wav_e2e,
                 z_start_idxs,
                 z_q_start_idxs,
                 x_mask,
