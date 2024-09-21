@@ -248,3 +248,236 @@ class NaturalSpeech(AbsGANTTS):
                 "weight": weight,
                 "optim_idx": 0,  # needed for trainer
             }
+
+    def _forward_discrminator(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        speech: torch.Tensor,
+        speech_lengths: torch.Tensor,
+        sids: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
+        """Perform discriminator forward.
+
+        Args:
+            text (Tensor): Text index tensor (B, T_text).
+            text_lengths (Tensor): Text length tensor (B,).
+            feats (Tensor): Feature tensor (B, T_feats, aux_channels).
+            feats_lengths (Tensor): Feature length tensor (B,).
+            speech (Tensor): Speech waveform tensor (B, T_wav).
+            speech_lengths (Tensor): Speech length tensor (B,).
+            sids (Optional[Tensor]): Speaker index tensor (B,) or (B, 1).
+            spembs (Optional[Tensor]): Speaker embedding tensor (B, spk_embed_dim).
+            lids (Optional[Tensor]): Language index tensor (B,) or (B, 1).
+
+        Returns:
+            Dict[str, Any]:
+                * loss (Tensor): Loss scalar tensor.
+                * stats (Dict[str, float]): Statistics to be monitored.
+                * weight (Tensor): Weight tensor to summarize losses.
+                * optim_idx (int): Optimizer index (0 for G and 1 for D).
+
+        """
+        # setup
+        batch_size = text.size(0)
+        feats = feats.transpose(1, 2)
+        speech = speech.unsqueeze(1)
+        reuse_cache = True
+        if not self.cache_generator_outputs or self._cache is None:
+            reuse_cache = False
+            outs = self.generator(
+                text=text,
+                text_lengths=text_lengths,
+                feats=feats,
+                feats_lengths=feats_lengths,
+                sids=sids,
+                spembs=spembs,
+                lids=lids,
+            )
+        else:
+            outs = self._cache
+
+        # store cache
+        if self.cache_generator_outputs and not reuse_cache:
+            self._cache = outs
+
+        # parse outputs
+        (pre_wav_post, _, z_start_idxs, _,
+         _, _, _, _,
+         _, _) = outs
+        wav_post_segs = get_segments(x=speech,
+                                     start_idxs=z_start_idxs * self.generator.upsample_factor,
+                                     segment_size=self.generator.segment_size * self.generator.upsample_factor)
+
+        p_hat = self.discriminator(pre_wav_post.detach())
+        p = self.discriminator(wav_post_segs)
+        with autocast(enabled=False):
+            real_loss, fake_loss = self.discriminator_adv_loss(p_hat, p)
+            loss = real_loss + fake_loss
+
+        stats = dict(
+            discriminator_loss=loss.item(),
+            discriminator_real_loss=real_loss.item(),
+            discriminator_fake_loss=fake_loss.item(),
+        )
+        loss, stats, weight = force_gatherable((loss, stats, batch_size), loss.device)
+
+        # reset cache
+        if reuse_cache or not self.training:
+            self._cache = None
+
+        return {
+            "loss": loss,
+            "stats": stats,
+            "weight": weight,
+            "optim_idx": 1,  # needed for trainer
+        }
+
+    def forward(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        speech: torch.Tensor,
+        speech_lengths: torch.Tensor,
+        sids: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        forward_generator: bool = True,
+    ) -> Dict[str, Any]:
+        """Perform generator forward.
+
+        Args:
+            text (Tensor): Text index tensor (B, T_text).
+            text_lengths (Tensor): Text length tensor (B,).
+            feats (Tensor): Feature tensor (B, T_feats, aux_channels).
+            feats_lengths (Tensor): Feature length tensor (B,).
+            speech (Tensor): Speech waveform tensor (B, T_wav).
+            speech_lengths (Tensor): Speech length tensor (B,).
+            sids (Optional[Tensor]): Speaker index tensor (B,) or (B, 1).
+            spembs (Optional[Tensor]): Speaker embedding tensor (B, spk_embed_dim).
+            lids (Optional[Tensor]): Language index tensor (B,) or (B, 1).
+            forward_generator (bool): Whether to forward generator.
+
+        Returns:
+            Dict[str, Any]:
+                - loss (Tensor): Loss scalar tensor.
+                - stats (Dict[str, float]): Statistics to be monitored.
+                - weight (Tensor): Weight tensor to summarize losses.
+                - optim_idx (int): Optimizer index (0 for G and 1 for D).
+
+        """
+        if forward_generator:
+            return self._forward_generator(
+                text=text,
+                text_lengths=text_lengths,
+                feats=feats,
+                feats_lengths=feats_lengths,
+                speech=speech,
+                speech_lengths=speech_lengths,
+                sids=sids,
+                spembs=spembs,
+                lids=lids,
+            )
+        else:
+            return self._forward_discrminator(
+                text=text,
+                text_lengths=text_lengths,
+                feats=feats,
+                feats_lengths=feats_lengths,
+                speech=speech,
+                speech_lengths=speech_lengths,
+                sids=sids,
+                spembs=spembs,
+                lids=lids,
+            )
+
+    def inference(
+        self,
+        text: torch.Tensor,
+        feats: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        spembs: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        durations: Optional[torch.Tensor] = None,
+        noise_scale: float = 0.667,
+        noise_scale_dur: float = 0.8,
+        alpha: float = 1.0,
+        max_len: Optional[int] = None,
+        use_teacher_forcing: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        """Run inference.
+
+        Args:
+            text (Tensor): Input text index tensor (T_text,).
+            feats (Tensor): Feature tensor (T_feats, aux_channels).
+            sids (Tensor): Speaker index tensor (1,).
+            spembs (Optional[Tensor]): Speaker embedding tensor (spk_embed_dim,).
+            lids (Tensor): Language index tensor (1,).
+            durations (Tensor): Ground-truth duration tensor (T_text,).
+            noise_scale (float): Noise scale value for flow.
+            noise_scale_dur (float): Noise scale value for duration predictor.
+            alpha (float): Alpha parameter to control the speed of generated speech.
+            max_len (Optional[int]): Maximum length.
+            use_teacher_forcing (bool): Whether to use teacher forcing.
+
+        Returns:
+            Dict[str, Tensor]:
+                * wav (Tensor): Generated waveform tensor (T_wav,).
+                * att_w (Tensor): Monotonic attention weight tensor (T_feats, T_text).
+                * duration (Tensor): Predicted duration tensor (T_text,).
+
+        """
+        # setup
+        text = text[None]
+        text_lengths = torch.tensor(
+            [text.size(1)],
+            dtype=torch.long,
+            device=text.device,
+        )
+        if sids is not None:
+            sids = sids.view(1)
+        if lids is not None:
+            lids = lids.view(1)
+        if durations is not None:
+            durations = durations.view(1, 1, -1)
+
+        # inference
+        if use_teacher_forcing:
+            assert feats is not None
+            feats = feats[None].transpose(1, 2)
+            feats_lengths = torch.tensor(
+                [feats.size(2)],
+                dtype=torch.long,
+                device=feats.device,
+            )
+            wav, dur = self.generator.inference(
+                text=text,
+                text_lengths=text_lengths,
+                feats=feats,
+                feats_lengths=feats_lengths,
+                sids=sids,
+                spembs=spembs,
+                lids=lids,
+                max_len=max_len,
+                use_teacher_forcing=use_teacher_forcing,
+            )
+        else:
+            wav, dur = self.generator.inference(
+                text=text,
+                text_lengths=text_lengths,
+                sids=sids,
+                spembs=spembs,
+                lids=lids,
+                dur=durations,
+                noise_scale=noise_scale,
+                noise_scale_dur=noise_scale_dur,
+                alpha=alpha,
+                max_len=max_len,
+            )
+        return dict(wav=wav.view(-1), duration=dur[0])
