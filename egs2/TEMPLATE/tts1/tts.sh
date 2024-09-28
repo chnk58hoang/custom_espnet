@@ -47,10 +47,10 @@ local_data_opts="" # Options to be passed to local/data.sh.
 
 # Feature extraction related
 feats_type=raw             # Input feature type.
-audio_format=flac          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
+audio_format=wav          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
 min_wav_duration=0.1       # Minimum duration in second.
 max_wav_duration=20        # Maximum duration in second.
-use_sid=false              # Whether to use speaker id as the inputs (Need utt2spk in data directory).
+use_sid=true              # Whether to use speaker id as the inputs (Need utt2spk in data directory).
 use_lid=false              # Whether to use language id as the inputs (Need utt2lang in data directory).
 feats_extract=fbank        # On-the-fly feature extractor.
 feats_normalize=global_mvn # On-the-fly feature normalizer.
@@ -86,22 +86,22 @@ tts_exp=""         # Specify the directory path for experiment. If this option i
 tts_stats_dir=""   # Specify the directory path for statistics. If empty, automatically decided.
 num_splits=1       # Number of splitting for tts corpus.
 teacher_dumpdir="" # Directory of teacher outputs (needed if tts=fastspeech).
-write_collected_feats=false # Whether to dump features in stats collection.
-tts_task=tts                # TTS task (tts or gan_tts).
+write_collected_feats=true # Whether to dump features in stats collection.
+tts_task=                # TTS task (tts or gan_tts).
 
 # Decoding related
-inference_config="" # Config for decoding.
-inference_args=""   # Arguments for decoding (e.g., "--threshold 0.75").
-                    # Note that it will overwrite args in inference config.
-inference_tag=""    # Suffix for decoding directory.
-inference_model=train.loss.ave.pth # Model path for decoding.
-                                   # e.g.
-                                   # inference_model=train.loss.best.pth
-                                   # inference_model=3epoch.pth
-                                   # inference_model=valid.acc.best.pth
-                                   # inference_model=valid.loss.ave.pth
-vocoder_file=none  # Vocoder parameter file, If set to none, Griffin-Lim will be used.
-download_model=""  # Download a model from Model Zoo and use it for decoding.
+# inference_config="" # Config for decoding.
+# inference_args=""   # Arguments for decoding (e.g., "--threshold 0.75").
+#                     # Note that it will overwrite args in inference config.
+# inference_tag=""    # Suffix for decoding directory.
+# inference_model=train.loss.ave.pth # Model path for decoding.
+#                                    # e.g.
+#                                    # inference_model=train.loss.best.pth
+#                                    # inference_model=3epoch.pth
+#                                    # inference_model=valid.acc.best.pth
+#                                    # inference_model=valid.loss.ave.pth
+# vocoder_file=none  # Vocoder parameter file, If set to none, Griffin-Lim will be used.
+# download_model=""  # Download a model from Model Zoo and use it for decoding.
 
 # [Task dependent] Set the datadir name created by local/data.sh
 train_set=""     # Name of training set.
@@ -110,8 +110,8 @@ test_sets=""     # Names of test sets. Multiple items (e.g., both dev and eval s
 srctexts=""      # Texts to create token list. Multiple items can be specified.
 nlsyms_txt=none  # Non-linguistic symbol list (needed if existing).
 token_type=phn   # Transcription type (char or phn).
-cleaner=tacotron # Text cleaner.
-g2p=g2p_en       # g2p method (needed if token_type=phn).
+cleaner= # Text cleaner.
+g2p=       # g2p method (needed if token_type=phn).
 lang=noinfo      # The language type of corpus.
 text_fold_length=150   # fold_length for text data.
 speech_fold_length=800 # fold_length for speech data.
@@ -272,18 +272,18 @@ if [ -z "${tag}" ]; then
         tag+="$(echo "${train_args}" | sed -e "s/--/\_/g" -e "s/[ |=]//g")"
     fi
 fi
-if [ -z "${inference_tag}" ]; then
-    if [ -n "${inference_config}" ]; then
-        inference_tag="$(basename "${inference_config}" .yaml)"
-    else
-        inference_tag=inference
-    fi
-    # Add overwritten arg's info
-    if [ -n "${inference_args}" ]; then
-        inference_tag+="$(echo "${inference_args}" | sed -e "s/--/\_/g" -e "s/[ |=]//g")"
-    fi
-    inference_tag+="_$(echo "${inference_model}" | sed -e "s/\//_/g" -e "s/\.[^.]*$//g")"
-fi
+# if [ -z "${inference_tag}" ]; then
+#     if [ -n "${inference_config}" ]; then
+#         inference_tag="$(basename "${inference_config}" .yaml)"
+#     else
+#         inference_tag=inference
+#     fi
+#     # Add overwritten arg's info
+#     if [ -n "${inference_args}" ]; then
+#         inference_tag+="$(echo "${inference_args}" | sed -e "s/--/\_/g" -e "s/[ |=]//g")"
+#     fi
+#     inference_tag+="_$(echo "${inference_model}" | sed -e "s/\//_/g" -e "s/\.[^.]*$//g")"
+# fi
 
 # The directory used for collect-stats mode
 if [ -z "${tts_stats_dir}" ]; then
@@ -310,44 +310,44 @@ fi
 if ! "${skip_data_prep}"; then
     if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         log "Stage 1: Data preparation for data/${train_set}, data/${valid_set}, etc."
-        # [Task dependent] Need to create data.sh for new corpus
+        # TODO: write script prepare 
         local/data.sh ${local_data_opts}
     fi
 
 
+    # if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
+    #     # TODO(kamo): Change kaldi-ark to npy or HDF5?
+    #     # ====== Recreating "wav.scp" ======
+    #     # Kaldi-wav.scp, which can describe the file path with unix-pipe, like "cat /some/path |",
+    #     # shouldn't be used in training process.
+    #     # "format_wav_scp.sh" dumps such pipe-style-wav to real audio file
+    #     # and also it can also change the audio-format and sampling rate.
+    #     # If nothing is need, then format_wav_scp.sh does nothing:
+    #     # i.e. the input file format and rate is same as the output.
+
+    #     log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
+    #     for dset in "${train_set}" "${valid_set}" ${test_sets}; do
+    #         if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
+    #             _suf="/org"
+    #         else
+    #             _suf=""
+    #         fi
+    #         utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
+    #         rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
+    #         _opts=
+    #         if [ -e data/"${dset}"/segments ]; then
+    #             _opts+="--segments data/${dset}/segments "
+    #         fi
+
+    #         # shellcheck disable=SC2086
+    #         scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
+    #             --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
+    #             "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
+    #         echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
+    #     done
+    # fi
+
     if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
-        # TODO(kamo): Change kaldi-ark to npy or HDF5?
-        # ====== Recreating "wav.scp" ======
-        # Kaldi-wav.scp, which can describe the file path with unix-pipe, like "cat /some/path |",
-        # shouldn't be used in training process.
-        # "format_wav_scp.sh" dumps such pipe-style-wav to real audio file
-        # and also it can also change the audio-format and sampling rate.
-        # If nothing is need, then format_wav_scp.sh does nothing:
-        # i.e. the input file format and rate is same as the output.
-
-        log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
-        for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-            if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                _suf="/org"
-            else
-                _suf=""
-            fi
-            utils/copy_data_dir.sh data/"${dset}" "${data_feats}${_suf}/${dset}"
-            rm -f ${data_feats}${_suf}/${dset}/{segments,wav.scp,reco2file_and_channel}
-            _opts=
-            if [ -e data/"${dset}"/segments ]; then
-                _opts+="--segments data/${dset}/segments "
-            fi
-
-            # shellcheck disable=SC2086
-            scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
-                --audio-format "${audio_format}" --fs "${fs}" ${_opts} \
-                "data/${dset}/wav.scp" "${data_feats}${_suf}/${dset}"
-            echo "${feats_type}" > "${data_feats}${_suf}/${dset}/feats_type"
-        done
-    fi
-
-    if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         # Extract speaker embedding
         if "${use_spk_embed}"; then
             if [ "${spk_embed_tool}" = "kaldi" ]; then
@@ -492,7 +492,7 @@ if ! "${skip_data_prep}"; then
     fi
 
 
-    if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+    if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
         log "Stage 4: Remove long/short data: ${data_feats}/org -> ${data_feats}"
 
         # NOTE(kamo): Not applying to test_sets to keep original data
@@ -547,7 +547,7 @@ if ! "${skip_data_prep}"; then
     fi
 
 
-    if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         log "Stage 5: Generate token_list from ${srctexts}"
         # "nlsyms_txt" should be generated by local/data.sh if need
 
