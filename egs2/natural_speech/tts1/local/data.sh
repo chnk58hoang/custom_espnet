@@ -41,9 +41,9 @@ fi
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
     log "stage 2: utils/subset_data_dir.sh"
     # make validation and test sets
-    utils/copy_data_dir.sh "data/${spk}_parallel100" "data/${train_set}"
-    utils/subset_data_dir.sh --first "data/${spk}_nonpara30" 15 "data/${train_dev}"
-    utils/subset_data_dir.sh --last "data/${spk}_nonpara30" 15 "data/${eval_set}"
+    # utils/copy_data_dir.sh "data/${spk}_parallel100" "data/${train_set}"
+    utils/subset_data_dir.sh --per-spk "data" 500 "data/${valid_set}"
+    utils/subset_data_dir.sh --per-spk "data" 500 "data/${test_set}"
 fi
 
 log "Successfully finished. [elapsed=${SECONDS}s]"
