@@ -10,7 +10,7 @@ data_dir=data
 
 # check arguments
 if [ $# != 1 ]; then
-    echo "Usage: $0 <corpus_dir>"
+    echo "Usage: $0 <wav_dir>"
     exit 1
 fi
 
@@ -65,5 +65,5 @@ python local/split_set.py \
 
 utils/utt2spk_to_spk2utt.pl ${train_dir}/utt2spk > ${train_dir}/spk2utt
 utils/utt2spk_to_spk2utt.pl ${valid_dir}/utt2spk > ${valid_dir}/spk2utt
-utils/utt2spk_to_spk2utt.pl ${test_dir}/utt2spk > ${tets_dir}/spk2utt
+utils/utt2spk_to_spk2utt.pl ${test_dir}/utt2spk > ${test_dir}/spk2utt
 echo "finished making text, wav.scp, utt2spk and spk2utt."
